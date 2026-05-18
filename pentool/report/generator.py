@@ -198,7 +198,25 @@ class ReportGenerator:
         # Sous-sections extraites
         self._port_data = scan_data.get("port_scan", {})
         self._dns_data  = scan_data.get("dns_enum",  {})
-        self._fuzz_data = scan_data.get("fuzz",      {})
+        # fuzz peut etre une liste (multi-ports) ou un dict (single)
+        _fuzz_raw = scan_data.get("fuzz", [])
+        if isinstance(_fuzz_raw, dict):
+            _fuzz_raw = [_fuzz_raw] if _fuzz_raw else []
+        self._fuzz_data_list: list[dict] = _fuzz_raw
+        # Pour compatibilite avec le reste du code : on fusionne en un seul dict
+        if self._fuzz_data_list:
+            all_results = []
+            for fd in self._fuzz_data_list:
+                all_results.extend(fd.get("results", []))
+            self._fuzz_data = {
+                "target_url":   self._fuzz_data_list[0].get("target_url", "—"),
+                "total_tested": sum(fd.get("total_tested", 0) for fd in self._fuzz_data_list),
+                "scan_time":    sum(fd.get("scan_time", 0.0) for fd in self._fuzz_data_list),
+                "results":      all_results,
+            }
+        else:
+            self._fuzz_data = {}
+            
         self._cve_data  = scan_data.get("cve_matches", [])
 
     # ------------------------------------------------------------------

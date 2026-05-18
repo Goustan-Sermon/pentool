@@ -275,6 +275,87 @@ class DirFuzzer:
         return result
 
     # ------------------------------------------------------------------
+    def fuzz_recursive(
+        self,
+        target_url:    str,
+        depth:         int            = 2,
+        wordlist:      Optional[list[str]] = None,
+        custom_codes:  Optional[set[int]]  = None,
+    ) -> FuzzScanResult:
+        """
+        Fuzzing récursif — relance un scan dans chaque répertoire découvert.
+
+        Pour chaque chemin retournant 200/301, on relance le fuzzing
+        dessus jusqu'à la profondeur demandée.
+
+        Args:
+            target_url: URL de base
+            depth:      profondeur max (défaut: 2)
+            wordlist:   wordlist à utiliser
+            custom_codes: codes HTTP à considérer
+
+        Returns:
+            FuzzScanResult fusionné avec tous les chemins trouvés
+        """
+        from urllib.parse import urljoin
+
+        visited:   set[str]        = set()
+        all_found: list[FuzzResult] = []
+        queue:     list[str]        = [target_url]
+        current_depth = 0
+
+        info(f"[bold]Dir Fuzzer récursif[/bold] — profondeur max {depth}")
+
+        while queue and current_depth < depth:
+            next_queue: list[str] = []
+            for base in queue:
+                if base in visited:
+                    continue
+                visited.add(base)
+
+                # Fuzzing de ce niveau
+                level_result = self.fuzz(
+                    base,
+                    wordlist=wordlist,
+                    custom_codes=custom_codes,
+                )
+                all_found.extend(level_result.results)
+
+                # Identifier les sous-répertoires à explorer
+                for r in level_result.found:
+                    if r.status_code in (200, 301, 302, 403):
+                        # Un chemin qui ressemble à un répertoire
+                        path = r.path.rstrip("/")
+                        if "." not in path.split("/")[-1]:  # pas une extension de fichier
+                            sub_url = urljoin(base, path + "/")
+                            if sub_url not in visited:
+                                next_queue.append(sub_url)
+
+            queue = next_queue
+            current_depth += 1
+
+        # Construire le résultat fusionné
+        merged = FuzzScanResult(
+            target_url=target_url,
+            total_tested=len(visited) * (len(wordlist or WORDLIST_SMALL)),
+        )
+        # Dédupliquer par URL
+        seen_urls: set[str] = set()
+        for r in all_found:
+            if r.url not in seen_urls:
+                merged.results.append(r)
+                seen_urls.add(r.url)
+
+        _order = {"critical": 0, "high": 1, "medium": 2, "info": 3, "low": 4}
+        merged.results.sort(key=lambda r: (_order.get(r.severity, 5), r.status_code))
+
+        if merged.results:
+            # Affichage en arborescence
+            _print_tree(target_url, merged.results)
+
+        return merged
+
+    # ------------------------------------------------------------------
     def _probe(self, base_url: str, path: str) -> Optional[FuzzResult]:
         """Teste un chemin unique et retourne un FuzzResult ou None."""
         url = urljoin(base_url, path)
@@ -313,3 +394,68 @@ class DirFuzzer:
         if not url.endswith("/"):
             url += "/"
         return url
+
+# ──────────────────────────────────────────────
+# Affichage en arborescence des résultats
+# ──────────────────────────────────────────────
+
+def _print_tree(base_url: str, results: list) -> None:
+    """
+    Affiche les résultats de fuzzing sous forme d'arborescence.
+
+    /
+    ├── admin/           [200] HIGH
+    │   ├── login        [200] MEDIUM
+    │   └── dashboard    [403] INFO
+    ├── .env             [200] CRITICAL
+    └── api/
+        └── v1/users     [200] MEDIUM
+    """
+    from rich.tree import Tree
+    from rich      import box
+    from pentool.utils import console
+
+    _CODE_COLOR = {
+        200: "green", 201: "green", 204: "green",
+        301: "yellow", 302: "yellow",
+        401: "red", 403: "yellow",
+        500: "red",
+    }
+    _SEV_COLOR = {
+        "critical": "bold red",
+        "high":     "bold orange1",
+        "medium":   "bold yellow",
+        "info":     "dim",
+        "low":      "dim green",
+    }
+
+    # Construire une arborescence depuis les chemins
+    tree = Tree(f"[bold cyan]{base_url.rstrip('/')}[/bold cyan]")
+    nodes: dict[str, object] = {"": tree}
+
+    # Trier par chemin pour que l'arbre soit cohérent
+    sorted_results = sorted(results, key=lambda r: r.path)
+
+    for r in sorted_results:
+        parts  = r.path.strip("/").split("/")
+        parent = ""
+        for i, part in enumerate(parts):
+            current = "/".join(parts[: i + 1])
+            if current not in nodes:
+                is_last = i == len(parts) - 1
+                code_col = _CODE_COLOR.get(r.status_code, "white")
+                sev_col  = _SEV_COLOR.get(r.severity, "white")
+
+                if is_last:
+                    label = (
+                        f"[{sev_col}]{part}[/{sev_col}]"
+                        f"  [{code_col}]{r.status_code}[/{code_col}]"
+                        f"  [dim]{r.content_length} B[/dim]"
+                    )
+                else:
+                    label = f"[cyan]{part}/[/cyan]"
+
+                nodes[current] = nodes[parent].add(label)
+            parent = current
+
+    console.print(tree)

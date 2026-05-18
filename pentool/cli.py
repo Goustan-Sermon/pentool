@@ -249,6 +249,8 @@ def cmd_scan(
                                                   help="Desactiver le param fuzzing automatique"),
     no_cve:        bool           = typer.Option(False, "--no-cve"),
     no_pdf:        bool           = typer.Option(False, "--no-pdf"),
+    no_audit:      bool           = typer.Option(False, "--no-audit",
+                                                  help="Desactiver Phase 3 (fingerprinting + misconfigs)"),
     fuzz_threads:  int            = typer.Option(10,   "--fuzz-threads"),
     api_key:       Optional[str]  = typer.Option(None, "--api-key", envvar="NVD_API_KEY"),
     output:        Optional[Path] = typer.Option(None, "--output", "-o"),
@@ -361,62 +363,165 @@ def cmd_scan(
                 for v in vhost_result.found:
                     console.print(f"  [bold]{target}  {v.vhost}[/bold]")
 
-    # ── Phase 1e : Param Fuzzing automatique ─────────────────────────
+    # ── Phase 1e : Param Fuzzing (endpoints JSON uniquement) ──────────
     if not no_param and http_urls:
-        section("Phase 1e — Param Fuzzing (endpoints API)")
+        section("Phase 1e — Param Fuzzing (endpoints API JSON)")
         from pentool.recon.param_fuzzer import ParamFuzzer
+        param_fuzzer   = ParamFuzzer(threads=fuzz_threads)
+        param_findings = []
 
-        # Endpoints API courants a sonder automatiquement
-        api_endpoints = [
+        # On ne teste que les URLs qui renvoient du JSON (pas du HTML)
+        json_endpoints = [
             "user", "users", "api/user", "api/users",
-            "account", "profile", "me",
             "api/v1/user", "api/v1/users",
+            "me", "account", "profile",
             "token", "auth/token",
-            "admin", "admin/user",
         ]
 
-        param_fuzzer    = ParamFuzzer(threads=fuzz_threads)
-        param_findings  = []
-
         for base_url in http_urls:
-            for endpoint in api_endpoints:
+            for endpoint in json_endpoints:
                 url = f"{base_url.rstrip('/')}/{endpoint}"
                 try:
+                    # Sonde rapide : on verifie que la reponse est JSON
+                    import requests as _req
+                    probe = _req.get(url, timeout=4,
+                                     allow_redirects=True,
+                                     headers={"Accept": "application/json"})
+                    ct = probe.headers.get("Content-Type", "")
+                    body = probe.text.strip()
+
+                    # Ignorer si c est du HTML (page de login catchall)
+                    if "text/html" in ct or body.startswith("<!"):
+                        continue
+                    # Ignorer si la reponse est trop grande (page HTML deguisee)
+                    if len(body) > 2000 and not body.startswith("{"):
+                        continue
+
                     analysis = param_fuzzer.discover_params(url, wordlist=[
-                        "token","id","user","key","auth","api_key",
-                        "username","password","email","name","role",
-                        "access_token","session","debug","admin",
+                        "token", "id", "user", "key", "auth",
+                        "api_key", "username", "email", "name",
+                        "access_token", "session", "debug",
                     ])
+
                     if analysis.detected_params or analysis.param_hints:
+                        all_params = list(dict.fromkeys(
+                            analysis.param_hints + analysis.detected_params
+                        ))
                         finding = {
-                            "url":      url,
-                            "params":   analysis.detected_params,
-                            "hints":    analysis.param_hints,
-                            "baseline": analysis.baseline_body[:200],
+                            "url":    url,
+                            "params": all_params,
+                            "hints":  analysis.param_hints,
+                            "body":   body[:200],
                         }
                         param_findings.append(finding)
+                        info(f"  [cyan]{url}[/cyan]")
+                        info(f"  Parametre(s) detecte(s) : [yellow]{', '.join(all_params)}[/yellow]")
 
-                        info(f"  [cyan]{url}[/cyan] — params: [yellow]{', '.join(analysis.detected_params or analysis.param_hints)}[/yellow]")
+                        # IDOR automatique sur les parametres hints (plage 0-200)
+                        for pname in all_params[:2]:
+                            info(f"  -> IDOR {pname}=0..200...")
+                            idor = param_fuzzer.fuzz_range(url, pname, 0, 200)
+                            if idor.interesting_hits:
+                                finding["idor_hits"] = idor.to_dict()
+                                success(f"  {len(idor.interesting_hits)} reponse(s) avec donnees !")
+                                for h in idor.interesting_hits[:3]:
+                                    console.print(f"    [bold cyan]{h.url}[/bold cyan]")
+                                    console.print(f"    [dim]{h.response_body[:120].strip()}[/dim]")
 
-                        # Si on a trouve un parametre, on lance le fuzzing IDOR automatiquement
-                        for param_name in (analysis.param_hints or analysis.detected_params)[:2]:
-                            info(f"  -> IDOR scan sur [yellow]{param_name}[/yellow] (0-200)...")
-                            idor_result = param_fuzzer.fuzz_range(url, param_name, start=0, end=200)
-                            if idor_result.interesting_hits:
-                                finding["idor"] = idor_result.to_dict()
-                                success(f"  IDOR! {len(idor_result.interesting_hits)} reponse(s) avec donnees sensibles")
-                                for h in idor_result.interesting_hits[:3]:
-                                    console.print(f"    URL  : [bold cyan]{h.url}[/bold cyan]")
-                                    console.print(f"    Body : [dim]{h.response_body[:150].strip()}[/dim]")
                 except Exception:
-                    pass  # endpoint inaccessible, on continue
+                    continue
 
         if param_findings:
             combined["param_findings"] = param_findings
+            success(f"{len(param_findings)} endpoint(s) API interactif(s) trouve(s).")
         else:
-            info("Aucun endpoint API avec parametre detecte.")
+            info("Aucun endpoint API JSON detecte.")
 
-    # ── Phase 2 : CVE ────────────────────────────────────────────────
+    # ── Phase 3 : Audit (fingerprinting + misconfigurations) ─────────
+    if not no_audit:
+        section("Phase 3 — Audit : Fingerprinting & Misconfigurations")
+        from pentool.audit import (
+            WebFingerprinter, MisconfigChecker,
+            print_fingerprints, print_misconfig_report,
+        )
+        fingerprinter  = WebFingerprinter()
+        misconfig_chk  = MisconfigChecker()
+        audit_results  = {"fingerprints": [], "misconfigs": []}
+
+        # Construire la liste de toutes les URLs a auditer
+        # IP directe + vhosts decouverts
+        urls_to_audit = []
+        for base_url in http_urls:
+            urls_to_audit.append({"url": base_url, "host": None})
+
+        for v in combined.get("vhost", {}).get("found", []):
+            if http_urls:
+                urls_to_audit.append({
+                    "url":  http_urls[0],
+                    "host": v["vhost"],
+                })
+
+        for entry in urls_to_audit:
+            url  = entry["url"]
+            host = entry["host"]
+            label = host or url
+
+            # 3a. Fingerprinting applicatif
+            fps = fingerprinter.fingerprint_url(url, host_header=host)
+            if fps:
+                print_fingerprints(fps)
+                # Correlation CVE sur les apps detectees
+                if not no_cve and fps:
+                    from pentool.cve import NVDClient, CVECache
+                    client = NVDClient(api_key=api_key, max_results=5)
+                    cache  = CVECache()
+                    for fp in fps:
+                        if not fp.nvd_keyword:
+                            continue
+                        cache_key = CVECache.make_key(fp.nvd_keyword)
+                        cached = cache.get(cache_key)
+                        if cached is not None:
+                            fp.cves = [c.to_dict() for c in cached]
+                        else:
+                            cves = client.search_by_keyword(fp.nvd_keyword)
+                            fp.cves = [c.to_dict() for c in cves[:5]]
+                            if cves:
+                                cache.set(cache_key, cves)
+                        if fp.cves:
+                            info(f"  [cyan]{fp.app_name} {fp.version}[/cyan] → [danger]{len(fp.cves)}[/danger] CVE")
+                            for c in fp.cves[:3]:
+                                sev   = c.get("cvss_v3_severity","?")
+                                score = c.get("cvss_v3_score","?")
+                                info(f"    [dim]{c['cve_id']}  {sev}  {score}  {c['description'][:60]}[/dim]")
+                audit_results["fingerprints"].append(fp.to_dict() for fp in fps)
+
+            # 3b. Misconfigurations HTTP
+            mc = misconfig_chk.check_http(url, host_header=host)
+            if mc.findings:
+                print_misconfig_report(mc)
+                audit_results["misconfigs"].append(mc.to_dict())
+
+        # 3c. Checks services non-HTTP
+        for svc in port_result.open_ports:
+            if svc.service == "ftp" or svc.port == 21:
+                mc = misconfig_chk.check_ftp(target, svc.port)
+                if mc.findings:
+                    print_misconfig_report(mc)
+                    audit_results["misconfigs"].append(mc.to_dict())
+            if svc.service in ("mysql", "mariadb") or svc.port == 3306:
+                mc = misconfig_chk.check_mysql(target, svc.port)
+                if mc.findings:
+                    print_misconfig_report(mc)
+                    audit_results["misconfigs"].append(mc.to_dict())
+            if svc.service == "https" or svc.port == 443:
+                mc = misconfig_chk.check_ssl(target, svc.port, host=domain)
+                if mc.findings:
+                    print_misconfig_report(mc)
+                    audit_results["misconfigs"].append(mc.to_dict())
+
+        combined["audit"] = audit_results
+
+        # ── Phase 2 : CVE ────────────────────────────────────────────────
     if not no_cve:
         section("Phase 2 — Correlation CVE")
         matches = CVECorrelator(api_key=api_key).correlate(port_result)
