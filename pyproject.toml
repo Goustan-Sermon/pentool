@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pentool"
+version = "0.1.0"
+description = "Outil de test d'intrusion automatisé - Projet ISEN"
+requires-python = ">=3.10"
+dependencies = [
+    "typer[all]>=0.12",
+    "rich>=13",
+    "python-nmap>=0.7",
+    "dnspython>=2.6",
+    "python-whois>=0.9",
+    "requests>=2.31",
+    "reportlab>=4.0",
+    "ipaddress",
+]
+
+[project.scripts]
+pentool = "pentool.cli:app"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["pentool*"]

@@ -1,0 +1,10 @@
+pentool/__pycache__/
+pentool/cve/__pycache__/
+pentool/recon/__pycache__/
+pentool/report/__pycache__/
+pentool/utils/__pycache__/
+pentool.egg-info/
+rapport.json
+rapport.pdf
+tests
+.venv/
