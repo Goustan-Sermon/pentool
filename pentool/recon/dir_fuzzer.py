@@ -29,7 +29,7 @@ WORDLIST_SMALL: list[str] = [
     # Admin & config
     "admin", "administrator", "admin/login", "admin/dashboard",
     "wp-admin", "wp-login.php", "phpmyadmin", "pma",
-    "cpanel", "webmail", "panel", "dashboard", "user", "users",
+    "cpanel", "webmail", "panel", "dashboard",
     # Fichiers sensibles
     ".env", ".git", ".git/config", ".htaccess", ".htpasswd",
     "config.php", "config.yml", "config.json", "settings.py",
@@ -209,27 +209,46 @@ class DirFuzzer:
         # Normalisation de l'URL
         target_url = self._normalize_url(target_url)
         words      = wordlist  or WORDLIST_SMALL
-        exts       = extensions or [""]  # sans extensions par défaut (wordlist déjà précise)
+        exts       = extensions or [""]
         codes      = custom_codes or INTERESTING_CODES
 
-        # Construction de la liste complète des chemins à tester
         paths: list[str] = []
         for word in words:
             for ext in exts:
-                # N'ajoute l'extension que si le mot n'en a pas déjà une
                 if ext and "." in word:
                     continue
                 paths.append(f"{word}{ext}")
 
-        total   = len(paths)
-        result  = FuzzScanResult(target_url=target_url, total_tested=total)
-        done    = 0
-        start   = time.time()
+        total  = len(paths)
+        result = FuzzScanResult(target_url=target_url, total_tested=total)
+        done   = 0
+        start  = time.time()
 
-        info(f"[bold]Dir Fuzzer[/bold] — {total} chemins × {self._threads} threads → [cyan]{target_url}[/cyan]")
+        info(f"[bold]Dir Fuzzer[/bold] -- {total} chemins x {self._threads} threads -> [cyan]{target_url}[/cyan]")
 
+        # --- Reponse de reference anti-faux-positifs -------------------
+        # Sonde un chemin improbable pour detecter les serveurs catchall
+        ref_resp   = self._probe(target_url, "PENTOOL_NONEXISTENT_XYZ_12345")
+        ref_size   = ref_resp.content_length if ref_resp else -1
+        ref_status = ref_resp.status_code    if ref_resp else -1
+
+        if ref_resp and ref_status in codes:
+            warning(
+                f"Serveur catchall detecte : repond {ref_status} ({ref_size} B) "
+                f"pour tout chemin. Filtrage anti-faux-positifs actif."
+            )
+
+        def _is_false_positive(r: FuzzResult) -> bool:
+            """Vrai si la reponse est identique a la reference catchall."""
+            if ref_resp is None or ref_status == -1:
+                return False
+            same_status = r.status_code == ref_status
+            same_size   = abs(r.content_length - ref_size) <= 10
+            return same_status and same_size
+
+        # --- Fuzzing parallele -----------------------------------------
         with console.status(
-            f"[cyan]Fuzzing en cours… 0/{total}[/cyan]", spinner="dots"
+            f"[cyan]Fuzzing en cours... 0/{total}[/cyan]", spinner="dots"
         ) as status:
             with ThreadPoolExecutor(max_workers=self._threads) as pool:
                 futures = {
@@ -239,21 +258,20 @@ class DirFuzzer:
                 for future in as_completed(futures):
                     done += 1
                     if done % 20 == 0:
-                        status.update(f"[cyan]Fuzzing en cours… {done}/{total}[/cyan]")
+                        status.update(f"[cyan]Fuzzing en cours... {done}/{total}[/cyan]")
 
                     fuzz_res = future.result()
                     if fuzz_res and fuzz_res.status_code in codes:
-                        with self._lock:
-                            result.results.append(fuzz_res)
+                        if not _is_false_positive(fuzz_res):
+                            with self._lock:
+                                result.results.append(fuzz_res)
 
                     if self._delay:
                         time.sleep(self._delay)
 
         result.scan_time = time.time() - start
-        # Tri par criticité puis code HTTP
         _order = {"critical": 0, "high": 1, "medium": 2, "info": 3, "low": 4}
         result.results.sort(key=lambda r: (_order.get(r.severity, 5), r.status_code))
-
         return result
 
     # ------------------------------------------------------------------
