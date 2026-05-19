@@ -9,10 +9,9 @@ from __future__ import annotations
 
 import subprocess
 import sys
-from pathlib import Path
 from typing import Optional
 
-from pentool.utils import console, section, info, success
+from pentool.utils import console, section, info, warning
 
 
 # ──────────────────────────────────────────────
@@ -196,8 +195,6 @@ def _run_questionary() -> Optional[list[str]]:
         domain=domain or "",
         profile=profile_choice or "standard",
         modules=modules or [],
-        fuzz_wordlist=fuzz_wordlist,
-        vhost_wordlist=vhost_wordlist,
         api_key=api_key,
         output=output or "",
         threads=threads,
@@ -256,8 +253,8 @@ def _run_rich_fallback() -> Optional[list[str]]:
 
     return _build_command(
         target=target, domain=domain, profile=profile,
-        modules=modules, fuzz_wordlist=None, vhost_wordlist=None,
-        api_key="", output=output, threads="10", recursive=False,
+        modules=modules, api_key="",
+        output=output, threads="10", recursive=False,
     )
 
 
@@ -267,8 +264,7 @@ def _run_rich_fallback() -> Optional[list[str]]:
 
 def _build_command(
     target: str, domain: str, profile: str,
-    modules: list[str], fuzz_wordlist: Optional[str],
-    vhost_wordlist: Optional[str], api_key: str,
+    modules: list[str], api_key: str,
     output: str, threads: str, recursive: bool,
 ) -> list[str]:
     """Construit la liste d'arguments pour pentool scan."""
@@ -283,10 +279,8 @@ def _build_command(
     if "cve"   not in modules: cmd.append("--no-cve")
     if "audit" not in modules: cmd.append("--no-audit")
     if "pdf"   not in modules: cmd.append("--no-pdf")
-    if fuzz_wordlist and fuzz_wordlist != "builtin":
-        cmd += ["--fuzz-wordlist", fuzz_wordlist]
-    if vhost_wordlist and vhost_wordlist != "builtin":
-        cmd += ["--vhost-wordlist", vhost_wordlist]
+    # Note: les wordlists SecLists se passent via --wordlist dans les commandes
+    # standalone (pentool fuzz / pentool vhost), pas dans pentool scan
     if recursive:
         cmd.append("--fuzz-recursive")
     if api_key:
@@ -317,7 +311,7 @@ def run_interactive() -> None:
 
     console.print()
     section("Commande générée")
-    console.print(f"  [bold green]{' '.join(cmd)}[/bold green]")
+    info(f"  [bold green]{' '.join(cmd)}[/bold green]")
     console.print()
 
     # Confirmation avant exécution

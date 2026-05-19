@@ -12,13 +12,13 @@ import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field, asdict
 from typing import Optional
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urljoin
 
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
-from pentool.utils import info, warning, success, error, console
+from pentool.utils import info, warning, console
 
 
 # ──────────────────────────────────────────────
@@ -63,13 +63,6 @@ WORDLIST_SMALL: list[str] = [
     "old", "bak", "backup", "archive", "temp", "tmp",
     "cgi-bin", "scripts", "bin",
 ]
-
-# Extensions à tester en plus du chemin brut
-EXTENSIONS: list[str] = [
-    "", ".php", ".html", ".htm", ".asp", ".aspx",
-    ".jsp", ".txt", ".bak", ".old", ".zip",
-]
-
 
 # ──────────────────────────────────────────────
 # Codes HTTP intéressants (à reporter)

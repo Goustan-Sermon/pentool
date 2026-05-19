@@ -278,14 +278,31 @@ def cmd_scan(
     combined["port_scan"] = port_result.to_dict()
 
     # Detection des ports HTTP ouverts (utile pour les phases suivantes)
+    # Stratégie : on prend le port HTTP principal (80 ou 8080) en priorité,
+    # puis HTTPS seulement si pas de HTTP. Évite le double fuzzing 80+443.
     http_svcs = [s for s in port_result.open_ports
                  if s.service in ("http", "https", "http-alt", "http-proxy")
                  or s.port in (80, 443, 8080, 8443, 8000, 8888)]
-    http_urls = []
+
+    # Trier : HTTP avant HTTPS, ports standards avant non-standards
+    _http_priority = {80: 0, 8080: 1, 8000: 2, 8888: 3, 443: 10, 8443: 11}
+    http_svcs.sort(key=lambda s: _http_priority.get(s.port, 20))
+
+    http_urls: list[str] = []
+    seen_content_ports: set[str] = set()   # évite les doublons 80/443 même contenu
     for s in http_svcs:
-        scheme = "https" if s.service == "https" or s.port in (443, 8443) else "http"
+        scheme   = "https" if s.service == "https" or s.port in (443, 8443) else "http"
         port_sfx = f":{s.port}" if s.port not in (80, 443) else ""
-        http_urls.append(f"{scheme}://{target}{port_sfx}")
+        url      = f"{scheme}://{target}{port_sfx}"
+        # Dédupliquer : si on a déjà http://target, on n'ajoute pas https://target
+        # (sauf si le port HTTPS est vraiment différent, ex: 8443)
+        dedup_key = f"{target}:{s.port}"
+        if dedup_key not in seen_content_ports:
+            seen_content_ports.add(dedup_key)
+            # Pour 443 : ne l'ajouter que s'il n'y a pas déjà un HTTP sur 80
+            if s.port == 443 and any(u.startswith("http://") for u in http_urls):
+                continue   # 80 déjà présent, on skip 443 (même contenu en général)
+            http_urls.append(url)
 
     # ── Phase 1b : DNS ────────────────────────────────────────────────
     if not no_dns:
@@ -367,10 +384,11 @@ def cmd_scan(
     if not no_param and http_urls:
         section("Phase 1e — Param Fuzzing (endpoints API JSON)")
         from pentool.recon.param_fuzzer import ParamFuzzer
+        import requests as _req
+
         param_fuzzer   = ParamFuzzer(threads=fuzz_threads)
         param_findings = []
 
-        # On ne teste que les URLs qui renvoient du JSON (pas du HTML)
         json_endpoints = [
             "user", "users", "api/user", "api/users",
             "api/v1/user", "api/v1/users",
@@ -378,22 +396,43 @@ def cmd_scan(
             "token", "auth/token",
         ]
 
-        for base_url in http_urls:
+        # Construire la liste des URLs à tester :
+        # 1. URLs HTTP directes (IP ou domaine)
+        # 2. VHosts découverts en Phase 1d (avec Host header)
+        urls_to_param_fuzz: list[dict] = []
+        for u in http_urls:
+            urls_to_param_fuzz.append({"base": u, "host": None})
+
+        # Ajouter les vhosts découverts — c'est ici qu'on trouve /user?token=0
+        vhost_found = combined.get("vhost", {}).get("found", [])
+        for v in vhost_found:
+            if v.get("status_code") in (200, 302, 401, 403) and http_urls:
+                urls_to_param_fuzz.append({
+                    "base": http_urls[0],
+                    "host": v["vhost"],
+                })
+
+        for entry in urls_to_param_fuzz:
+            base_url = entry["base"]
+            host_hdr = entry["host"]
+            req_headers = {"Accept": "application/json"}
+            if host_hdr:
+                req_headers["Host"] = host_hdr
+
             for endpoint in json_endpoints:
                 url = f"{base_url.rstrip('/')}/{endpoint}"
+                label = f"http://{host_hdr}/{endpoint}" if host_hdr else url
                 try:
-                    # Sonde rapide : on verifie que la reponse est JSON
-                    import requests as _req
-                    probe = _req.get(url, timeout=4,
-                                     allow_redirects=True,
-                                     headers={"Accept": "application/json"})
-                    ct = probe.headers.get("Content-Type", "")
+                    probe = _req.get(
+                        url, timeout=4, allow_redirects=True,
+                        headers=req_headers,
+                    )
+                    ct   = probe.headers.get("Content-Type", "")
                     body = probe.text.strip()
 
-                    # Ignorer si c est du HTML (page de login catchall)
+                    # Ignorer les pages HTML (catchall de login)
                     if "text/html" in ct or body.startswith("<!"):
                         continue
-                    # Ignorer si la reponse est trop grande (page HTML deguisee)
                     if len(body) > 2000 and not body.startswith("{"):
                         continue
 
@@ -408,22 +447,23 @@ def cmd_scan(
                             analysis.param_hints + analysis.detected_params
                         ))
                         finding = {
-                            "url":    url,
+                            "url":    label,
                             "params": all_params,
                             "hints":  analysis.param_hints,
                             "body":   body[:200],
+                            "host":   host_hdr,
                         }
                         param_findings.append(finding)
-                        info(f"  [cyan]{url}[/cyan]")
-                        info(f"  Parametre(s) detecte(s) : [yellow]{', '.join(all_params)}[/yellow]")
+                        info(f"  [cyan]{label}[/cyan]")
+                        info(f"  Parametre(s) : [yellow]{', '.join(all_params)}[/yellow]")
 
                         # IDOR automatique sur les parametres hints (plage 0-200)
                         for pname in all_params[:2]:
-                            info(f"  -> IDOR {pname}=0..200...")
+                            info(f"  -> IDOR {pname}=0..200 sur {label}...")
                             idor = param_fuzzer.fuzz_range(url, pname, 0, 200)
                             if idor.interesting_hits:
                                 finding["idor_hits"] = idor.to_dict()
-                                success(f"  {len(idor.interesting_hits)} reponse(s) avec donnees !")
+                                success(f"  {len(idor.interesting_hits)} reponse(s) avec donnees sensibles !")
                                 for h in idor.interesting_hits[:3]:
                                     console.print(f"    [bold cyan]{h.url}[/bold cyan]")
                                     console.print(f"    [dim]{h.response_body[:120].strip()}[/dim]")
@@ -437,7 +477,7 @@ def cmd_scan(
         else:
             info("Aucun endpoint API JSON detecte.")
 
-    # ── Phase 3 : Audit (fingerprinting + misconfigurations) ─────────
+        # ── Phase 3 : Audit (fingerprinting + misconfigurations) ─────────
     if not no_audit:
         section("Phase 3 — Audit : Fingerprinting & Misconfigurations")
         from pentool.audit import (
@@ -455,7 +495,8 @@ def cmd_scan(
             urls_to_audit.append({"url": base_url, "host": None})
 
         for v in combined.get("vhost", {}).get("found", []):
-            if http_urls:
+            # N'auditer que les vhosts qui répondent vraiment (200 ou 401)
+            if http_urls and v.get("status_code") in (200, 201, 401, 403):
                 urls_to_audit.append({
                     "url":  http_urls[0],
                     "host": v["vhost"],

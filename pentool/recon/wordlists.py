@@ -12,7 +12,6 @@ from __future__ import annotations
 from pathlib import Path
 from typing  import Optional
 
-from pentool.utils import info, warning
 
 
 # ──────────────────────────────────────────────
@@ -130,79 +129,6 @@ SECLISTS_CATALOG: list[tuple[str, str, str]] = [
 # Résolution d'une wordlist
 # ──────────────────────────────────────────────
 
-def resolve_wordlist(
-    key_or_path: Optional[str],
-    fallback: list[str],
-    category:   str = "web",
-) -> list[str]:
-    """
-    Résout une wordlist depuis :
-      - Un chemin absolu fourni
-      - Une clé SecLists (ex: "web_common")
-      - Un fallback embarqué
-
-    Args:
-        key_or_path: clé SecLists, chemin absolu, ou None
-        fallback:    wordlist embarquée à utiliser si rien d'autre
-        category:    pour le message d'info
-
-    Returns:
-        Liste de strings prête à l'emploi
-    """
-    if key_or_path is None:
-        root = _seclists_root()
-        if root:
-            # Choisir automatiquement une wordlist appropriée
-            auto = _auto_select(category, root)
-            if auto:
-                return auto
-        return fallback
-
-    # Chemin absolu
-    p = Path(key_or_path)
-    if p.exists() and p.is_file():
-        words = [l.strip() for l in p.read_text(errors="replace").splitlines()
-                 if l.strip() and not l.startswith("#")]
-        info(f"Wordlist : {p} ({len(words)} entrées)")
-        return words
-
-    # Clé du catalogue SecLists
-    root = _seclists_root()
-    if root:
-        for key, rel_path, desc in SECLISTS_CATALOG:
-            if key == key_or_path:
-                full = root / rel_path
-                if full.exists():
-                    words = [l.strip() for l in full.read_text(errors="replace").splitlines()
-                             if l.strip() and not l.startswith("#")]
-                    info(f"SecLists [{key}] : {full.name} ({len(words)} entrées)")
-                    return words
-                else:
-                    warning(f"SecLists trouvé mais fichier manquant : {full}")
-
-    warning(f"Wordlist '{key_or_path}' introuvable — utilisation de la liste embarquée.")
-    return fallback
-
-
-def _auto_select(category: str, root: Path) -> Optional[list[str]]:
-    """Sélectionne automatiquement la meilleure wordlist selon la catégorie."""
-    category_map = {
-        "web":   ["web_common", "web_big", "web_small"],
-        "dns":   ["dns_subdomains_1k", "dns_fierce"],
-        "vhost": ["dns_subdomains_1k", "dns_fierce"],
-        "param": ["params_burp"],
-    }
-    keys = category_map.get(category, [])
-    for key in keys:
-        for k, rel, _ in SECLISTS_CATALOG:
-            if k == key:
-                full = root / rel
-                if full.exists():
-                    words = [l.strip() for l in full.read_text(errors="replace").splitlines()
-                             if l.strip() and not l.startswith("#")]
-                    info(f"SecLists auto [{key}] : {full.name} ({len(words)} entrées)")
-                    return words
-    return None
 
 
 def list_available() -> list[dict]:

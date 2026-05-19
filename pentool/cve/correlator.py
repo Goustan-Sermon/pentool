@@ -142,10 +142,51 @@ class CVECorrelator:
             existing_ids = {c.cve_id for c in cves}
             cves.extend(c for c in kw_found if c.cve_id not in existing_ids)
 
-        # Stratégie C : fallback nom de service (si rien trouvé)
-        if not cves and svc.service and svc.service not in ("unknown", ""):
+        # Stratégie C : fallback nom de service
+        # UNIQUEMENT si le service est un nom reconnu (pas "gws", "tcpwrapped"...)
+        _SKIP_FALLBACK = {
+            "unknown", "", "tcpwrapped", "gws", "gen-serv", "ms-wbt-server",
+            "microsoft-ds", "netbios-ssn", "msrpc", "epmap",
+        }
+        if not cves and svc.service and svc.service not in _SKIP_FALLBACK:
             fallback = self._client.search_by_keyword(svc.service)
-            cves.extend(fallback)
+            relevant = []
+            svc_lower = svc.service.lower()
+            for c in fallback:
+                desc_lower = c.description.lower()
+                cpe_str    = " ".join(c.cpe_list).lower()
+                if svc_lower in desc_lower or svc_lower in cpe_str:
+                    relevant.append(c)
+            cves.extend(relevant)
+
+        # Filtre de pertinence : le produit doit apparaître dans la CVE
+        if cves and (svc.product or svc.version):
+            product_lower = (svc.product or "").lower().split()[0]
+            if product_lower and len(product_lower) > 3:
+                filtered = [
+                    c for c in cves
+                    if product_lower in c.description.lower()
+                    or product_lower in " ".join(c.cpe_list).lower()
+                ]
+                if filtered or not svc.cpe:
+                    cves = filtered
+
+        # Filtre de pertinence global : si on a un produit/version connu,
+        # on vérifie que les CVE correspondent vraiment au produit
+        if cves and (svc.product or svc.version):
+            product_lower = (svc.product or "").lower().split()[0]  # ex: "apache"
+            if product_lower and len(product_lower) > 3:
+                filtered = []
+                for c in cves:
+                    desc_lower = c.description.lower()
+                    cpe_str    = " ".join(c.cpe_list).lower()
+                    # La CVE doit mentionner le produit OU avoir un CPE correspondant
+                    if product_lower in desc_lower or product_lower in cpe_str:
+                        filtered.append(c)
+                # Si le filtre est trop agressif (0 résultat sur des CVE trouvées par CPE),
+                # on garde quand même les CVE trouvées par CPE exact (stratégie A)
+                if filtered or not svc.cpe:
+                    cves = filtered
 
         # Mise en cache
         if self._cache and cache_key and cves:

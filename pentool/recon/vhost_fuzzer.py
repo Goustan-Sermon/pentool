@@ -182,47 +182,88 @@ class VHostFuzzer:
         info(f"[bold]VHost Fuzzer[/bold] — base domain : [cyan]{base_domain}[/cyan]")
         info(f"IP cible : [cyan]{target_ip}[/cyan]  |  {len(words)} sous-domaines à tester")
 
-        # 1. Réponse de référence (Host = IP brute)
-        ref = self._get_reference(base_url, target_ip)
-        if ref is None:
+        # 1. Réponses de référence — deux sondes pour détecter les catchalls
+        # Sonde A : Host = IP brute (comportement par défaut du serveur)
+        ref_a = self._get_reference(base_url, target_ip)
+        if ref_a is None:
             error(f"Impossible de joindre {base_url} — vhost fuzzing abandonné.")
             return result
 
-        ref_size   = ref.get("length", -1)
-        ref_status = ref.get("status",  0)
-        info(f"Réponse de référence : HTTP {ref_status}, {ref_size} octets")
+        # Sonde B : sous-domaine aléatoire improbable (détecte le wildcard DNS)
+        ref_b = self._get_reference(base_url, f"pentool-nonexistent-xyz123.{base_domain}")
+
+        ref_status_a = ref_a.get("status", 0)
+        ref_size_a   = ref_a.get("length", -1)
+        ref_status_b = ref_b.get("status", 0) if ref_b else ref_status_a
+        ref_size_b   = ref_b.get("length", -1) if ref_b else ref_size_a
+
+        info(f"Réponse de référence (IP)      : HTTP {ref_status_a}, {ref_size_a} B")
+        info(f"Réponse de référence (wildcard): HTTP {ref_status_b}, {ref_size_b} B")
+
+        def _is_vhost_false_positive(r: VHostResult) -> bool:
+            """
+            Filtre multi-niveau :
+              1. Même status ET même taille que la référence IP → faux positif
+              2. Même status ET même taille que le wildcard    → faux positif
+              3. Code 404 avec taille identique à tous les autres 404 → faux positif (catchall)
+            """
+            # Tolérance taille : 10 B
+            tol = 10
+
+            # Comparer avec référence IP
+            if (r.status_code == ref_status_a
+                    and abs(r.content_length - ref_size_a) <= tol):
+                return True
+
+            # Comparer avec wildcard
+            if (r.status_code == ref_status_b
+                    and abs(r.content_length - ref_size_b) <= tol):
+                return True
+
+            return False
 
         # 2. Fuzzing parallèle
         start    = time.time()
         done     = 0
         total    = len(words)
+        raw_results: list[VHostResult] = []
 
         with console.status(
             f"[cyan]VHost fuzzing… 0/{total}[/cyan]", spinner="dots"
         ) as status:
             with ThreadPoolExecutor(max_workers=self._threads) as pool:
                 futures = {
-                    pool.submit(
-                        self._probe, base_url, sub, base_domain
-                    ): sub
+                    pool.submit(self._probe, base_url, sub, base_domain): sub
                     for sub in words
                 }
                 for future in as_completed(futures):
                     done += 1
                     if done % 10 == 0:
                         status.update(f"[cyan]VHost fuzzing… {done}/{total}[/cyan]")
-
                     vhost_res = future.result()
-                    if vhost_res is None:
-                        continue
+                    if vhost_res:
+                        raw_results.append(vhost_res)
 
-                    # Anti-faux-positifs : différence de taille OU de status
-                    size_diff  = abs(vhost_res.content_length - ref_size)
-                    status_diff = vhost_res.status_code != ref_status
+        # 3. Anti-faux-positifs niveau 2 :
+        #    Grouper par (status_code, content_length) et rejeter les groupes
+        #    qui représentent >30% des résultats (comportement catchall)
+        from collections import Counter
+        size_groups = Counter(
+            (r.status_code, r.content_length) for r in raw_results
+        )
+        catchall_threshold = max(3, total * 0.20)  # plus de 20% = catchall
 
-                    if status_diff or size_diff > 50:
-                        with self._lock:
-                            result.found.append(vhost_res)
+        for r in raw_results:
+            key = (r.status_code, r.content_length)
+            if _is_vhost_false_positive(r):
+                continue
+            if size_groups[key] > catchall_threshold:
+                continue
+            # Codes non intéressants (404 inconnus non confirmés)
+            if r.status_code == 404 and size_groups[key] > 2:
+                continue
+            with self._lock:
+                result.found.append(r)
 
         result.total_tested = total
         result.scan_time    = time.time() - start
@@ -232,7 +273,7 @@ class VHostFuzzer:
             for v in result.found:
                 info(f"  ✔ [cyan]{v.vhost}[/cyan] → HTTP {v.status_code} ({v.content_length} B)")
         else:
-            info("Aucun vhost différent détecté.")
+            info("Aucun vhost réel détecté (tous les résultats filtrés comme catchall).")
 
         return result
 

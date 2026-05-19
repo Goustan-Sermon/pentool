@@ -5,7 +5,7 @@ Styles ReportLab centralisés pour le rapport PDF Pentool.
 from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units  import mm
-from reportlab.lib.enums  import TA_LEFT, TA_CENTER, TA_RIGHT
+from reportlab.lib.enums  import TA_LEFT, TA_CENTER
 
 
 # ── Palette de couleurs ────────────────────────────────────────────────
