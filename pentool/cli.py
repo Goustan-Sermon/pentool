@@ -649,7 +649,7 @@ def cmd_vhost(
       → découvre cacti.monitorsfour.htb
     """
     _banner()
-    from pentool.recon.vhost_fuzzer import VHostFuzzer, VHOST_WORDLIST
+    from pentool.recon.vhost_fuzzer import VHostFuzzer
     section(f"VHost Fuzzing -> {target} (domaine: {domain})")
 
     custom_words: Optional[list] = None
@@ -670,8 +670,6 @@ def cmd_vhost(
     )
 
     if result.found:
-        from rich.table import Table
-        from rich import box
         t = Table(box=box.ROUNDED, header_style="bold cyan", border_style="dim")
         t.add_column("VHost",        style="bold cyan",  width=40)
         t.add_column("Code",         justify="center",   width=8)
@@ -785,8 +783,6 @@ def cmd_param(
 
 def _print_param_results(result) -> None:
     """Affiche les résultats du param fuzzer."""
-    from rich.table import Table
-    from rich import box
     hits = result.hits
     if not hits:
         info("Aucun résultat différent de la baseline.")

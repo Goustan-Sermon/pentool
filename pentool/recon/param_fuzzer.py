@@ -16,7 +16,6 @@ import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field, asdict
 from typing import Optional
-from urllib.parse import urljoin, urlencode, urlparse, parse_qs
 
 import requests
 from requests.adapters import HTTPAdapter
