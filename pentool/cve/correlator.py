@@ -171,22 +171,43 @@ class CVECorrelator:
                 if filtered or not svc.cpe:
                     cves = filtered
 
-        # Filtre de pertinence global : si on a un produit/version connu,
-        # on vérifie que les CVE correspondent vraiment au produit
+        # Filtre de pertinence global : Produit + Version (Anti Faux-Positifs)
         if cves and (svc.product or svc.version):
-            product_lower = (svc.product or "").lower().split()[0]  # ex: "apache"
-            if product_lower and len(product_lower) > 3:
-                filtered = []
-                for c in cves:
-                    desc_lower = c.description.lower()
-                    cpe_str    = " ".join(c.cpe_list).lower()
-                    # La CVE doit mentionner le produit OU avoir un CPE correspondant
-                    if product_lower in desc_lower or product_lower in cpe_str:
-                        filtered.append(c)
-                # Si le filtre est trop agressif (0 résultat sur des CVE trouvées par CPE),
-                # on garde quand même les CVE trouvées par CPE exact (stratégie A)
-                if filtered or not svc.cpe:
-                    cves = filtered
+            product_lower = (svc.product or "").lower().split()[0]  # ex: "apache" ou "openssh"
+            version_lower = (svc.version or "").lower()             # ex: "6.6.1p1"
+
+            filtered = []
+            for c in cves:
+                desc_lower = c.description.lower()
+                cpe_str    = " ".join(c.cpe_list).lower()
+
+                # 1. Vérification du produit
+                product_match = True
+                if product_lower and len(product_lower) > 2:
+                    product_match = (product_lower in desc_lower) or (product_lower in cpe_str)
+
+                # 2. Vérification stricte de la version
+                version_match = True
+                if version_lower:
+                    # On nettoie un peu la version au cas où Nmap ajoute des suffixes locaux (ex: "Ubuntu")
+                    clean_version = version_lower.split()[0]
+                    version_match = (clean_version in cpe_str) or (clean_version in desc_lower)
+
+                # Si le produit ET la version correspondent, on garde la CVE
+                if product_match and version_match:
+                    filtered.append(c)
+
+            # Gestion de la robustesse : 
+            if filtered:
+                cves = filtered
+            elif svc.cpe:
+                # Si le filtre strict a tout supprimé, mais que Nmap nous avait donné 
+                # un CPE exact, on ne garde QUE les CVEs qui contiennent ce CPE spécifique.
+                cves = [c for c in cves if any(cpe.lower() in " ".join(c.cpe_list).lower() for cpe in svc.cpe)]
+            else:
+                # Si on n'a pas de CPE et que le filtre strict échoue, on rejette tout 
+                # pour éviter les faux positifs aberrants de 1999.
+                cves = []
 
         # Mise en cache
         if self._cache and cache_key and cves:

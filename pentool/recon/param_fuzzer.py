@@ -86,7 +86,7 @@ PARAM_ACCEPTED_PATTERNS: list[re.Pattern] = [
 # Indique que l'injection a produit quelque chose d'intéressant
 INTERESTING_PATTERNS: list[re.Pattern] = [
     re.compile(p, re.IGNORECASE) for p in [
-        r'"id"\s*:',
+r'"id"\s*:',
         r'"user(name)?"\s*:',
         r'"email"\s*:',
         r'"password"\s*:',
@@ -95,9 +95,12 @@ INTERESTING_PATTERNS: list[re.Pattern] = [
         r'"token"\s*:',
         r'"key"\s*:',
         r'"secret"\s*:',
-        r'\[\s*\{',           # début de liste JSON
+        r'\[\s*\{',
         r'"data"\s*:\s*\[',
         r'"results"\s*:\s*\[',
+        r'password\s*[:=]',
+        r'mot de passe\s*[:=]',
+        r'mdp\s*[:=]',
     ]
 ]
 
@@ -179,7 +182,7 @@ class ParamFuzzer:
         self,
         threads:    int   = 10,
         timeout:    float = 5.0,
-        user_agent: str   = "Pentool/0.1 ParamFuzzer (ISEN)",
+        user_agent: str   = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         method:     str   = "GET",
     ) -> None:
         self._threads  = threads
@@ -327,10 +330,10 @@ class ParamFuzzer:
                     if resp is None:
                         continue
 
-                    body    = resp.text[:512]
+                    body    = resp.text[:8000]
                     size    = len(resp.content)
                     is_int  = any(p.search(body) for p in INTERESTING_PATTERNS)
-                    is_diff = abs(size - baseline_size) > 20
+                    is_diff = abs(size - baseline_size) > 0
 
                     # Filtrer les réponses identiques à la baseline
                     if filter_same_size and not is_diff and not is_int:

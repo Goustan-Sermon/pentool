@@ -288,15 +288,17 @@ def cmd_scan(
     _http_priority = {80: 0, 8080: 1, 8000: 2, 8888: 3, 443: 10, 8443: 11}
     http_svcs.sort(key=lambda s: _http_priority.get(s.port, 20))
 
+    # Détermination de l'hôte à utiliser pour les protocoles Web (Priorité au domaine si spécifié)
+    web_host = domain if domain else target
+
     http_urls: list[str] = []
     seen_content_ports: set[str] = set()   # évite les doublons 80/443 même contenu
     for s in http_svcs:
         scheme   = "https" if s.service == "https" or s.port in (443, 8443) else "http"
         port_sfx = f":{s.port}" if s.port not in (80, 443) else ""
-        url      = f"{scheme}://{target}{port_sfx}"
-        # Dédupliquer : si on a déjà http://target, on n'ajoute pas https://target
-        # (sauf si le port HTTPS est vraiment différent, ex: 8443)
-        dedup_key = f"{target}:{s.port}"
+        url      = f"{scheme}://{web_host}{port_sfx}"
+        # Dédupliquer : si on a déjà http://host, on n'ajoute pas https://host
+        dedup_key = f"{web_host}:{s.port}"
         if dedup_key not in seen_content_ports:
             seen_content_ports.add(dedup_key)
             # Pour 443 : ne l'ajouter que s'il n'y a pas déjà un HTTP sur 80
@@ -412,10 +414,18 @@ def cmd_scan(
                     "host": v["vhost"],
                 })
 
+        # Définition d'un User-Agent standard (Chrome sur Windows) pour éviter le blocage basique
+        STANDARD_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+
         for entry in urls_to_param_fuzz:
             base_url = entry["base"]
             host_hdr = entry["host"]
-            req_headers = {"Accept": "application/json"}
+            
+            # Injection du User-Agent dans les en-têtes
+            req_headers = {
+                "Accept": "application/json",
+                "User-Agent": STANDARD_USER_AGENT
+            }
             if host_hdr:
                 req_headers["Host"] = host_hdr
 

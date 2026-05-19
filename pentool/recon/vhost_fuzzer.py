@@ -132,7 +132,7 @@ class VHostFuzzer:
         self,
         threads:  int   = 10,
         timeout:  float = 5.0,
-        user_agent: str = "Pentool/0.1 VHost-Fuzzer (ISEN)",
+        user_agent: str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     ) -> None:
         self._threads    = threads
         self._timeout    = timeout

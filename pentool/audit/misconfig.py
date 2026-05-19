@@ -80,7 +80,7 @@ class MisconfigChecker:
         adapter = HTTPAdapter(max_retries=1)
         self._session.mount("http://",  adapter)
         self._session.mount("https://", adapter)
-        self._session.headers["User-Agent"] = "Pentool/0.1 MisconfigChecker (ISEN)"
+        self._session.headers["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
     # ------------------------------------------------------------------
     def check_http(self, url: str, host_header: Optional[str] = None) -> MisconfigReport:

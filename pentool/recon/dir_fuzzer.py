@@ -29,7 +29,7 @@ WORDLIST_SMALL: list[str] = [
     # Admin & config
     "admin", "administrator", "admin/login", "admin/dashboard",
     "wp-admin", "wp-login.php", "phpmyadmin", "pma",
-    "cpanel", "webmail", "panel", "dashboard",
+    "cpanel", "webmail", "panel", "dashboard", "user", "users",
     # Fichiers sensibles
     ".env", ".git", ".git/config", ".htaccess", ".htpasswd",
     "config.php", "config.yml", "config.json", "settings.py",
@@ -44,7 +44,7 @@ WORDLIST_SMALL: list[str] = [
     "reset-password", "oauth", "auth", "sso",
     # Uploads & media
     "upload", "uploads", "files", "static", "assets",
-    "images", "img", "media", "public",
+    "images", "img", "media", "public", "contact",
     # Monitoring & infra
     "health", "healthz", "status", "metrics", "actuator",
     "actuator/health", "actuator/env", "actuator/beans",
@@ -159,7 +159,7 @@ class DirFuzzer:
         threads:     int   = 10,
         timeout:     float = 5.0,
         delay:       float = 0.0,
-        user_agent:  str   = "Pentool/0.1 (ISEN Security Scanner)",
+        user_agent:  str   = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         follow_redirects: bool = False,
     ) -> None:
         self._threads          = threads
