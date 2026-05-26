@@ -330,3 +330,6 @@ $RECYCLE.BIN/
 # Output files
 *.pdf
 *.json
+html/
+docker-compose.yml
+Dockerfile

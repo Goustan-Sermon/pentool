@@ -769,7 +769,13 @@ def cmd_scan(
         else:
             info("Aucun endpoint API JSON detecte.")
 
-        # ── Phase 3 : Audit (fingerprinting + misconfigurations) ─────────
+    # ── Phase 2 : CVE ────────────────────────────────────────────────
+    if not no_cve:
+        matches = CVECorrelator(api_key=api_key).correlate(port_result)
+        print_cve_summary(matches)
+        combined["cve_matches"] = [m.to_dict() for m in matches]
+
+    # ── Phase 3 : Audit (fingerprinting + misconfigurations) ─────────
     if not no_audit:
         section("Phase 3 — Audit : Fingerprinting & Misconfigurations")
         from pentool.audit import (
@@ -831,12 +837,13 @@ def cmd_scan(
                                 f"  [cyan]{fp.app_name} {fp.version}[/cyan] → [danger]{len(fp.cves)}[/danger] CVE"
                             )
                             for c in fp.cves[:3]:
-                                sev = c.get("cvss_v3_severity", "?")
-                                score = c.get("cvss_v3_score", "?")
+                                sev = c.get("severity", "?")
+                                score = c.get("score", "?")
                                 info(
                                     f"    [dim]{c['cve_id']}  {sev}  {score}  {c['description'][:60]}[/dim]"
                                 )
-                audit_results["fingerprints"].append(fp.to_dict() for fp in fps)
+
+                audit_results["fingerprints"].extend([fp.to_dict() for fp in fps])
 
             # 3b. Misconfigurations HTTP
             mc = misconfig_chk.check_http(url, host_header=host)
@@ -864,13 +871,6 @@ def cmd_scan(
 
         combined["audit"] = audit_results
 
-        # ── Phase 2 : CVE ────────────────────────────────────────────────
-    if not no_cve:
-        section("Phase 2 — Correlation CVE")
-        matches = CVECorrelator(api_key=api_key).correlate(port_result)
-        print_cve_summary(matches)
-        combined["cve_matches"] = [m.to_dict() for m in matches]
-
     # ── Résumé terminal ──────────────────────────────────────────────
     section("Resume du scan complet")
 
@@ -886,6 +886,8 @@ def cmd_scan(
     vhosts_found = len(combined.get("vhost", {}).get("found", []))
     param_found = len(combined.get("param_findings", []))
     total_cve = sum(len(m.get("cves", [])) for m in combined.get("cve_matches", []))
+    for fp in combined.get("audit", {}).get("fingerprints", []):
+        total_cve += len(fp.get("cves", []))
     subs = len(combined.get("dns_enum", {}).get("subdomains", []))
 
     console.print(
