@@ -16,6 +16,7 @@ dependencies = [
     "requests>=2.31",
     "reportlab>=4.0",
     "ipaddress",
+    "InquirerPy>=0.3.4"
 ]
 
 [project.scripts]
