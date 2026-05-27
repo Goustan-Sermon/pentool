@@ -1,5 +1,5 @@
 # Pentool — Outil de test d'intrusion automatisé
-**Projet de fin d'études — ISEN | v0.1.0**
+**Projet de fin d'études — ISEN | v0.2.0**
 
 Pentool est un outil CLI de pentest automatisé écrit en Python. Il enchaîne désormais quatre grandes phases :
 1. **Reconnaissance** (ports, énumération DNS, fuzzing HTTP de répertoires, fuzzing de Virtual Hosts, et fuzzing de paramètres API/IDOR).
