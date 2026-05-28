@@ -1172,10 +1172,20 @@ class ReportGenerator:
 
         for mc in self._audit_data.get("misconfigs", []):
             for finding in mc.get("findings", []):
+                check_name = finding.get("check_name", "")
+                
+                # --- LOGIQUE ANTI-DOUBLON ---
+                # Si l'audit remonte le fichier .env, on vérifie si le fuzzer ne l'a pas déjà remonté
+                if ".env" in check_name.lower():
+                    # "critical_paths" a été défini plus haut dans la fonction
+                    if any(".env" in path for path in critical_paths):
+                        continue  # On ignore cette misconfig car le fuzzer l'a déjà traitée !
+                # ----------------------------
+
                 recs.append(
                     (
                         finding.get("severity", "LOW"),
-                        finding.get("check_name", "Misconfiguration"),
+                        check_name,
                         f"{finding.get('description', '')} Solution suggérée : {finding.get('remediation', '')}",
                     )
                 )
