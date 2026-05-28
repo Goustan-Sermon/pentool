@@ -265,6 +265,21 @@ class ReportGenerator:
                 )
 
     # ------------------------------------------------------------------
+
+    def _section_number(self, section: str) -> int:
+        """Retourne le numéro de section dynamique selon les données disponibles."""
+        active = ["ports"]
+        if self._dns_data:
+            active.append("dns")
+        if self._fuzz_data:
+            active.append("fuzz")
+        if self._audit_data.get("misconfigs") or self._audit_data.get("fingerprints"):
+            active.append("audit")
+        if self._cve_data:
+            active.append("cve")
+        active.append("recommendations")
+        return active.index(section) + 2
+
     def build(self, output_path: str | Path) -> Path:
         output_path = Path(output_path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -291,10 +306,10 @@ class ReportGenerator:
             story += self._section_dns()
         if self._fuzz_data:
             story += self._section_fuzz()
-        if self._cve_data:
-            story += self._section_cve()
         if self._audit_data.get("misconfigs") or self._audit_data.get("fingerprints"):
             story += self._section_audit()
+        if self._cve_data:
+            story += self._section_cve()
         story += self._section_recommendations()
 
         doc.build(
@@ -521,7 +536,12 @@ class ReportGenerator:
         S = self._styles
         story = []
 
-        story.append(Paragraph("2. Services Détectés", S["section_title"]))
+        story.append(
+            Paragraph(
+                f"{self._section_number('ports')}. Services Détectés",
+                S["section_title"],
+            )
+        )
         story.append(
             HRFlowable(width="100%", thickness=0.5, color=C.BORDER, spaceAfter=3 * mm)
         )
@@ -592,7 +612,11 @@ class ReportGenerator:
         S = self._styles
         story = []
 
-        story.append(Paragraph("3. Énumération DNS", S["section_title"]))
+        story.append(
+            Paragraph(
+                f"{self._section_number('dns')}. Énumération DNS", S["section_title"]
+            )
+        )
         story.append(
             HRFlowable(width="100%", thickness=0.5, color=C.BORDER, spaceAfter=3 * mm)
         )
@@ -692,10 +716,12 @@ class ReportGenerator:
     def _section_fuzz(self) -> list:
         S = self._styles
         story = []
-        n = 3 if self._dns_data else 2  # numéro de section dynamique
 
         story.append(
-            Paragraph(f"{n + 1}. Fuzzing de Répertoires HTTP", S["section_title"])
+            Paragraph(
+                f"{self._section_number('fuzz')}. Fuzzing de Répertoires HTTP",
+                S["section_title"],
+            )
         )
         story.append(
             HRFlowable(width="100%", thickness=0.5, color=C.BORDER, spaceAfter=3 * mm)
@@ -771,16 +797,11 @@ class ReportGenerator:
         S = self._styles
         story = []
 
-        # Calcul du numéro de section
-        sec = 2
-        if self._dns_data:
-            sec += 1
-        if self._fuzz_data:
-            sec += 1
-        sec += 1
-
         story.append(
-            Paragraph(f"{sec}. Vulnérabilités CVE Identifiées", S["section_title"])
+            Paragraph(
+                f"{self._section_number('cve')}. Vulnérabilités CVE Identifiées",
+                S["section_title"],
+            )
         )
         story.append(
             HRFlowable(width="100%", thickness=0.5, color=C.BORDER, spaceAfter=3 * mm)
@@ -907,17 +928,11 @@ class ReportGenerator:
         S = self._styles
         story = []
 
-        # Calcul du numéro de section dynamique
-        sec = 3
-        if self._dns_data:
-            sec += 1
-        if self._fuzz_data:
-            sec += 1
-        if self._cve_data:
-            sec += 1
-
         story.append(
-            Paragraph(f"{sec}. Audit Web & Misconfigurations", S["section_title"])
+            Paragraph(
+                f"{self._section_number('audit')}. Audit Web & Misconfigurations",
+                S["section_title"],
+            )
         )
         story.append(
             HRFlowable(width="100%", thickness=0.5, color=C.BORDER, spaceAfter=3 * mm)
@@ -1016,16 +1031,12 @@ class ReportGenerator:
         S = self._styles
         story = []
 
-        # Numéro de section dynamique
-        sec = 3
-        if self._dns_data:
-            sec += 1
-        if self._fuzz_data:
-            sec += 1
-        if self._cve_data:
-            sec += 1
-
-        story.append(Paragraph(f"{sec}. Recommandations", S["section_title"]))
+        story.append(
+            Paragraph(
+                f"{self._section_number('recommendations')}. Recommandations",
+                S["section_title"],
+            )
+        )
         story.append(
             HRFlowable(width="100%", thickness=0.5, color=C.BORDER, spaceAfter=3 * mm)
         )
