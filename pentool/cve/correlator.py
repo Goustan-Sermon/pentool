@@ -10,11 +10,11 @@ from __future__ import annotations
 
 from typing import Optional
 
-from pentool.cve.models    import CVEEntry, ServiceCVEMatch
+from pentool.cve.cache import CVECache
+from pentool.cve.models import CVEEntry, ServiceCVEMatch
 from pentool.cve.nvd_client import NVDClient
-from pentool.cve.cache      import CVECache
 from pentool.recon.port_scanner import HostResult, ServiceInfo
-from pentool.utils import info, warning, success, console
+from pentool.utils import console, info, success, warning
 
 
 class CVECorrelator:
@@ -29,14 +29,14 @@ class CVECorrelator:
 
     def __init__(
         self,
-        api_key:     Optional[str] = None,
-        max_cves:    int           = 10,
-        use_cache:   bool          = True,
-        min_score:   float         = 0.0,   # filtrer par score CVSS minimum
+        api_key: Optional[str] = None,
+        max_cves: int = 10,
+        use_cache: bool = True,
+        min_score: float = 0.0,  # filtrer par score CVSS minimum
     ) -> None:
-        self._client    = NVDClient(api_key=api_key, max_results=max_cves)
-        self._cache     = CVECache() if use_cache else None
-        self._max_cves  = max_cves
+        self._client = NVDClient(api_key=api_key, max_results=max_cves)
+        self._cache = CVECache() if use_cache else None
+        self._max_cves = max_cves
         self._min_score = min_score
 
     # ──────────────────────────────────────────────
@@ -59,7 +59,9 @@ class CVECorrelator:
             warning("Aucun service avec version détectée — corrélation CVE impossible.")
             return []
 
-        info(f"Corrélation CVE pour [bold]{len(open_services)}[/bold] service(s) avec version…")
+        info(
+            f"Corrélation CVE pour [bold]{len(open_services)}[/bold] service(s) avec version…"
+        )
 
         matches: list[ServiceCVEMatch] = []
 
@@ -75,12 +77,12 @@ class CVECorrelator:
 
             # Tri par sévérité puis score
             cves.sort(key=lambda c: (c.severity_order, -(c.score or 0)))
-            cves = cves[:self._max_cves]
+            cves = cves[: self._max_cves]
 
             # Annotation du contexte de détection
             for c in cves:
                 c.matched_service = svc.fingerprint
-                c.matched_port    = svc.port
+                c.matched_port = svc.port
 
             match = ServiceCVEMatch(
                 service_name=svc.service,
@@ -92,7 +94,9 @@ class CVECorrelator:
             )
             matches.append(match)
 
-            _emoji = "🔴" if match.critical_count else ("🟠" if match.high_count else "🟡")
+            _emoji = (
+                "🔴" if match.critical_count else ("🟠" if match.high_count else "🟡")
+            )
             info(
                 f"  {_emoji} :{svc.port} [cyan]{svc.fingerprint}[/cyan] "
                 f"→ [bold]{len(cves)}[/bold] CVE"
@@ -103,8 +107,8 @@ class CVECorrelator:
         matches.sort(key=lambda m: (-(m.max_score or 0), -m.critical_count))
 
         total_cves = sum(len(m.cves) for m in matches)
-        critical   = sum(m.critical_count for m in matches)
-        high_      = sum(m.high_count    for m in matches)
+        critical = sum(m.critical_count for m in matches)
+        high_ = sum(m.high_count for m in matches)
         success(
             f"Corrélation terminée : [bold]{total_cves}[/bold] CVE trouvées "
             f"([danger]{critical}[/danger] CRITICAL, [warning]{high_}[/warning] HIGH)"
@@ -145,26 +149,36 @@ class CVECorrelator:
         # Stratégie C : fallback nom de service
         # UNIQUEMENT si le service est un nom reconnu (pas "gws", "tcpwrapped"...)
         _SKIP_FALLBACK = {
-            "unknown", "", "tcpwrapped", "gws", "gen-serv", "ms-wbt-server",
-            "microsoft-ds", "netbios-ssn", "msrpc", "epmap",
+            "unknown",
+            "",
+            "tcpwrapped",
+            "gws",
+            "gen-serv",
+            "ms-wbt-server",
+            "microsoft-ds",
+            "netbios-ssn",
+            "msrpc",
+            "epmap",
         }
-        if not cves and svc.service and svc.service not in _SKIP_FALLBACK:
-            fallback = self._client.search_by_keyword(svc.service)
-            relevant = []
-            svc_lower = svc.service.lower()
-            for c in fallback:
-                desc_lower = c.description.lower()
-                cpe_str    = " ".join(c.cpe_list).lower()
-                if svc_lower in desc_lower or svc_lower in cpe_str:
-                    relevant.append(c)
-            cves.extend(relevant)
+        # if not cves and svc.service and svc.service not in _SKIP_FALLBACK:
+        #     fallback = self._client.search_by_keyword(svc.service)
+        #     relevant = []
+        #     svc_lower = svc.service.lower()
+        #     for c in fallback:
+        #         desc_lower = c.description.lower()
+        #         cpe_str = " ".join(c.cpe_list).lower()
+        #         if svc_lower in desc_lower or svc_lower in cpe_str:
+        #             relevant.append(c)
+        #     cves.extend(relevant)
 
         # Filtre de pertinence : le produit doit apparaître dans la CVE
         if cves and (svc.product or svc.version):
-            product_lower = (svc.product or "").lower().split()[0]
+            parts = (svc.product or "").lower().split()
+            product_lower = parts[0] if parts else ""
             if product_lower and len(product_lower) > 3:
                 filtered = [
-                    c for c in cves
+                    c
+                    for c in cves
                     if product_lower in c.description.lower()
                     or product_lower in " ".join(c.cpe_list).lower()
                 ]
@@ -173,39 +187,50 @@ class CVECorrelator:
 
         # Filtre de pertinence global : Produit + Version (Anti Faux-Positifs)
         if cves and (svc.product or svc.version):
-            product_lower = (svc.product or "").lower().split()[0]  # ex: "apache" ou "openssh"
-            version_lower = (svc.version or "").lower()             # ex: "6.6.1p1"
+            parts = (svc.product or "").lower().split()
+            product_lower = parts[0] if parts else ""
+            version_lower = (svc.version or "").lower()  # ex: "6.6.1p1"
 
             filtered = []
             for c in cves:
                 desc_lower = c.description.lower()
-                cpe_str    = " ".join(c.cpe_list).lower()
+                cpe_str = " ".join(c.cpe_list).lower()
 
                 # 1. Vérification du produit
                 product_match = True
                 if product_lower and len(product_lower) > 2:
-                    product_match = (product_lower in desc_lower) or (product_lower in cpe_str)
+                    product_match = (product_lower in desc_lower) or (
+                        product_lower in cpe_str
+                    )
 
                 # 2. Vérification stricte de la version
                 version_match = True
                 if version_lower:
                     # On nettoie un peu la version au cas où Nmap ajoute des suffixes locaux (ex: "Ubuntu")
                     clean_version = version_lower.split()[0]
-                    version_match = (clean_version in cpe_str) or (clean_version in desc_lower)
+                    version_match = (clean_version in cpe_str) or (
+                        clean_version in desc_lower
+                    )
 
                 # Si le produit ET la version correspondent, on garde la CVE
                 if product_match and version_match:
                     filtered.append(c)
 
-            # Gestion de la robustesse : 
+            # Gestion de la robustesse :
             if filtered:
                 cves = filtered
             elif svc.cpe:
-                # Si le filtre strict a tout supprimé, mais que Nmap nous avait donné 
+                # Si le filtre strict a tout supprimé, mais que Nmap nous avait donné
                 # un CPE exact, on ne garde QUE les CVEs qui contiennent ce CPE spécifique.
-                cves = [c for c in cves if any(cpe.lower() in " ".join(c.cpe_list).lower() for cpe in svc.cpe)]
+                cves = [
+                    c
+                    for c in cves
+                    if any(
+                        cpe.lower() in " ".join(c.cpe_list).lower() for cpe in svc.cpe
+                    )
+                ]
             else:
-                # Si on n'a pas de CPE et que le filtre strict échoue, on rejette tout 
+                # Si on n'a pas de CPE et que le filtre strict échoue, on rejette tout
                 # pour éviter les faux positifs aberrants de 1999.
                 cves = []
 

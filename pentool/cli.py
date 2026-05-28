@@ -402,12 +402,12 @@ def cmd_scan(
                     name="1e · Fuzzing paramètres API / IDOR",
                     enabled=not no_param,
                 ),
-                Choice("cve", name="2  · Corrélation CVE (NVD)", enabled=not no_cve),
                 Choice(
                     "audit",
-                    name="3  · Audit misconfigs & fingerprint",
+                    name="2  · Fingerprinting & misconfigs",
                     enabled=not no_audit,
                 ),
+                Choice("cve", name="3  · Corrélation CVE (NVD)", enabled=not no_cve),
             ],
             qmark="🛠️ ",
             pointer="❯",
@@ -443,7 +443,7 @@ def cmd_scan(
         if not no_cve and not api_key:
             has_key = ask(
                 inquirer.confirm,
-                message="Fournir une clé API NVD (accélère la Phase 2) ?",
+                message="Fournir une clé API NVD (accélère la Phase 3) ?",
                 default=False,
                 qmark="🔑",
             )
@@ -769,15 +769,9 @@ def cmd_scan(
         else:
             info("Aucun endpoint API JSON detecte.")
 
-    # ── Phase 2 : CVE ────────────────────────────────────────────────
-    if not no_cve:
-        matches = CVECorrelator(api_key=api_key).correlate(port_result)
-        print_cve_summary(matches)
-        combined["cve_matches"] = [m.to_dict() for m in matches]
-
-    # ── Phase 3 : Audit (fingerprinting + misconfigurations) ─────────
+    # ── Phase 2 : Audit (fingerprinting + misconfigurations) ────────────
     if not no_audit:
-        section("Phase 3 — Audit : Fingerprinting & Misconfigurations")
+        section("Phase 2 — Audit : Fingerprinting & Misconfigurations")
         from pentool.audit import (
             MisconfigChecker,
             WebFingerprinter,
@@ -796,62 +790,26 @@ def cmd_scan(
             urls_to_audit.append({"url": base_url, "host": None})
 
         for v in combined.get("vhost", {}).get("found", []):
-            # N'auditer que les vhosts qui répondent vraiment (200 ou 401)
             if http_urls and v.get("status_code") in (200, 201, 401, 403):
-                urls_to_audit.append(
-                    {
-                        "url": http_urls[0],
-                        "host": v["vhost"],
-                    }
-                )
+                urls_to_audit.append({"url": http_urls[0], "host": v["vhost"]})
 
         for entry in urls_to_audit:
             url = entry["url"]
             host = entry["host"]
-            label = host or url
 
-            # 3a. Fingerprinting applicatif
+            # 2a. Fingerprinting applicatif (CVE corrélées en Phase 3)
             fps = fingerprinter.fingerprint_url(url, host_header=host)
             if fps:
                 print_fingerprints(fps)
-                # Correlation CVE sur les apps detectees
-                if not no_cve and fps:
-                    from pentool.cve import CVECache, NVDClient
-
-                    client = NVDClient(api_key=api_key, max_results=5)
-                    cache = CVECache()
-                    for fp in fps:
-                        if not fp.nvd_keyword:
-                            continue
-                        cache_key = CVECache.make_key(fp.nvd_keyword)
-                        cached = cache.get(cache_key)
-                        if cached is not None:
-                            fp.cves = [c.to_dict() for c in cached]
-                        else:
-                            cves = client.search_by_keyword(fp.nvd_keyword)
-                            fp.cves = [c.to_dict() for c in cves[:5]]
-                            if cves:
-                                cache.set(cache_key, cves)
-                        if fp.cves:
-                            info(
-                                f"  [cyan]{fp.app_name} {fp.version}[/cyan] → [danger]{len(fp.cves)}[/danger] CVE"
-                            )
-                            for c in fp.cves[:3]:
-                                sev = c.get("severity", "?")
-                                score = c.get("score", "?")
-                                info(
-                                    f"    [dim]{c['cve_id']}  {sev}  {score}  {c['description'][:60]}[/dim]"
-                                )
-
                 audit_results["fingerprints"].extend([fp.to_dict() for fp in fps])
 
-            # 3b. Misconfigurations HTTP
+            # 2b. Misconfigurations HTTP
             mc = misconfig_chk.check_http(url, host_header=host)
             if mc.findings:
                 print_misconfig_report(mc)
                 audit_results["misconfigs"].append(mc.to_dict())
 
-        # 3c. Checks services non-HTTP
+        # 2c. Checks services non-HTTP
         for svc in port_result.open_ports:
             if svc.service == "ftp" or svc.port == 21:
                 mc = misconfig_chk.check_ftp(target, svc.port)
@@ -870,6 +828,50 @@ def cmd_scan(
                     audit_results["misconfigs"].append(mc.to_dict())
 
         combined["audit"] = audit_results
+
+    # ── Phase 3 : CVE (services ports + applications web) ───────────────
+    if not no_cve:
+        section("Phase 3 — Corrélation CVE")
+
+        # 3a. CVE sur les services réseau (Phase 1)
+        matches = CVECorrelator(api_key=api_key).correlate(port_result)
+        print_cve_summary(matches)
+        combined["cve_matches"] = [m.to_dict() for m in matches]
+
+        # 3b. CVE sur les applications web détectées en Phase 2
+        fingerprints = combined.get("audit", {}).get("fingerprints", [])
+        if fingerprints:
+            from pentool.cve import CVECache, NVDClient
+
+            client = NVDClient(api_key=api_key, max_results=5)
+            cache = CVECache()
+            info(
+                f"Corrélation CVE pour [bold]{len(fingerprints)}[/bold] application(s) web…"
+            )
+            for fp_dict in fingerprints:
+                keyword = fp_dict.get("nvd_keyword", "")
+                if not keyword:
+                    continue
+                cache_key = CVECache.make_key(keyword)
+                cached = cache.get(cache_key)
+                if cached is not None:
+                    fp_dict["cves"] = [c.to_dict() for c in cached]
+                else:
+                    cves = client.search_by_keyword(keyword)
+                    fp_dict["cves"] = [c.to_dict() for c in cves[:5]]
+                    if cves:
+                        cache.set(cache_key, cves)
+                if fp_dict.get("cves"):
+                    app = fp_dict.get("app_name", "?")
+                    ver = fp_dict.get("version", "?")
+                    info(
+                        f"  [cyan]{app} {ver}[/cyan] → [danger]{len(fp_dict['cves'])}[/danger] CVE"
+                    )
+                    for c in fp_dict["cves"][:3]:
+                        info(
+                            f"    [dim]{c['cve_id']}  {c.get('severity', '?')}  "
+                            f"{c.get('score', '?')}  {c.get('description', '')[:60]}[/dim]"
+                        )
 
     # ── Résumé terminal ──────────────────────────────────────────────
     section("Resume du scan complet")
@@ -917,7 +919,7 @@ def cmd_scan(
                     "[cyan]Generation du rapport PDF...[/cyan]", spinner="dots"
                 ):
                     generate_pdf(combined, pdf_path)
-                success(f"Rapport PDF -> [bold]{pdf_path}[/bold] ✅")
+                success(f"Rapport PDF -> [bold]{pdf_path}[/bold]")
             except Exception as exc:
                 warning(f"PDF non genere : {exc}")
         else:
