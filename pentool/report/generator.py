@@ -301,8 +301,12 @@ class ReportGenerator:
             active.append("fuzz")
         if self._audit_data.get("misconfigs") or self._audit_data.get("fingerprints"):
             active.append("audit")
-        if self._cve_data:
+            
+        # VRAIE VÉRIFICATION : on compte s'il y a au moins 1 CVE trouvée
+        total_cves = sum(len(m.get("cves", [])) for m in self._cve_data)
+        if total_cves > 0:
             active.append("cve")
+            
         active.append("recommendations")
         return active.index(section) + 2
 
@@ -334,8 +338,12 @@ class ReportGenerator:
             story += self._section_fuzz()
         if self._audit_data.get("misconfigs") or self._audit_data.get("fingerprints"):
             story += self._section_audit()
-        if self._cve_data:
+            
+        # MÊME VÉRIFICATION AVANT DE DESSINER LA PAGE
+        total_cves = sum(len(m.get("cves", [])) for m in self._cve_data)
+        if total_cves > 0:
             story += self._section_cve()
+            
         story += self._section_recommendations()
 
         doc.build(
@@ -1204,10 +1212,20 @@ class ReportGenerator:
 
         for mc in self._audit_data.get("misconfigs", []):
             for finding in mc.get("findings", []):
+                check_name = finding.get("check_name", "")
+                
+                # --- LOGIQUE ANTI-DOUBLON ---
+                # Si l'audit remonte le fichier .env, on vérifie si le fuzzer ne l'a pas déjà remonté
+                if ".env" in check_name.lower():
+                    # "critical_paths" a été défini plus haut dans la fonction
+                    if any(".env" in path for path in critical_paths):
+                        continue  # On ignore cette misconfig car le fuzzer l'a déjà traitée !
+                # ----------------------------
+
                 recs.append(
                     (
                         finding.get("severity", "LOW"),
-                        finding.get("check_name", "Misconfiguration"),
+                        check_name,
                         f"{finding.get('description', '')} Solution suggérée : {finding.get('remediation', '')}",
                     )
                 )

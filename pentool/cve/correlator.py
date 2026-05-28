@@ -177,67 +177,48 @@ class CVECorrelator:
         #             relevant.append(c)
         #     cves.extend(relevant)
 
-        # Filtre de pertinence : le produit doit apparaître dans la CVE
-        if cves and (svc.product or svc.version):
-            parts = (svc.product or "").lower().split()
-            product_lower = parts[0] if parts else ""
-            if product_lower and len(product_lower) > 3:
-                filtered = [
-                    c
-                    for c in cves
-                    if product_lower in c.description.lower()
-                    or product_lower in " ".join(c.cpe_list).lower()
-                ]
-                if filtered or not svc.cpe:
-                    cves = filtered
-
-        # Filtre de pertinence global : Produit + Version (Anti Faux-Positifs)
-        if cves and (svc.product or svc.version):
-            parts = (svc.product or "").lower().split()
-            product_lower = parts[0] if parts else ""
-            version_lower = (svc.version or "").lower()  # ex: "6.6.1p1"
+        # --- FILTRE DE PERTINENCE GLOBAL (Anti Faux-Positifs) ---
+        if cves and (svc.product or svc.service or svc.version):
+            # On utilise le service si Nmap n'a pas trouvé le produit exact
+            nom_cible = (svc.product or svc.service or "").lower().split()
+            target_lower = nom_cible[0] if nom_cible else ""
+            version_lower = (svc.version or "").lower()
 
             filtered = []
             for c in cves:
                 desc_lower = c.description.lower()
                 cpe_str = " ".join(c.cpe_list).lower()
 
-                # 1. Vérification du produit
-                product_match = True
-                if product_lower and len(product_lower) > 2:
-                    product_match = (product_lower in desc_lower) or (
-                        product_lower in cpe_str
-                    )
+                # 1. Le produit ou le service doit être mentionné
+                target_match = True
+                if target_lower and len(target_lower) > 2:
+                    target_match = (target_lower in desc_lower) or (target_lower in cpe_str)
 
-                # 2. Vérification stricte de la version
+                # 2. La version doit correspondre de manière stricte
                 version_match = True
                 if version_lower:
-                    # On nettoie un peu la version au cas où Nmap ajoute des suffixes locaux (ex: "Ubuntu")
                     clean_version = version_lower.split()[0]
-                    version_match = (clean_version in cpe_str) or (
-                        clean_version in desc_lower
-                    )
+                    # On cherche la version avec un espace ou un ':' devant 
+                    # pour éviter que la version "2" matche l'année "2009"
+                    version_match = (f":{clean_version}" in cpe_str) or (f" {clean_version}" in desc_lower) or (f"/{clean_version}" in desc_lower)
 
-                # Si le produit ET la version correspondent, on garde la CVE
-                if product_match and version_match:
+                # Si le nom ET la version matchent, c'est une vraie CVE
+                if target_match and version_match:
                     filtered.append(c)
 
             # Gestion de la robustesse :
             if filtered:
                 cves = filtered
             elif svc.cpe:
-                # Si le filtre strict a tout supprimé, mais que Nmap nous avait donné
-                # un CPE exact, on ne garde QUE les CVEs qui contiennent ce CPE spécifique.
+                # Si le filtre a tout supprimé, mais qu'on a un CPE exact de Nmap,
+                # on garde uniquement les CVEs qui contiennent ce CPE spécifique.
                 cves = [
-                    c
-                    for c in cves
-                    if any(
-                        cpe.lower() in " ".join(c.cpe_list).lower() for cpe in svc.cpe
-                    )
+                    c for c in cves
+                    if any(cpe.lower() in " ".join(c.cpe_list).lower() for cpe in svc.cpe)
                 ]
             else:
                 # Si on n'a pas de CPE et que le filtre strict échoue, on rejette tout
-                # pour éviter les faux positifs aberrants de 1999.
+                # pour éviter les faux positifs (le fameux bug du chiffre "2").
                 cves = []
 
         # Mise en cache
