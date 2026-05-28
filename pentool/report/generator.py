@@ -264,6 +264,32 @@ class ReportGenerator:
                     }
                 )
 
+        for m in self._cve_data:
+            for c in m.get("cves", []):
+                # Récupération du meilleur score disponible
+                raw_score = (
+                    c.get("score") or c.get("cvss_v3_score") or c.get("cvss_v2_score")
+                )
+
+                if raw_score is not None:
+                    try:
+                        score_val = float(raw_score)
+
+                        # Réassignation stricte de la sévérité selon l'échelle CVSS
+                        if score_val >= 9.0:
+                            c["severity"] = "CRITICAL"
+                        elif score_val >= 7.0:
+                            c["severity"] = "HIGH"
+                        elif score_val >= 4.0:
+                            c["severity"] = "MEDIUM"
+                        elif score_val > 0.0:
+                            c["severity"] = "LOW"
+
+                        # Unification de la clé "score" pour un affichage propre dans le tableau
+                        c["score"] = score_val
+                    except (ValueError, TypeError):
+                        pass
+
     # ------------------------------------------------------------------
 
     def _section_number(self, section: str) -> int:
