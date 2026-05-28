@@ -158,7 +158,7 @@ Commandes disponibles :
 
 C'est la commande principale. Elle permet d'enchaîner toutes les phases automatiquement ou d'être lancée via l'assistant interactif.
 
-### 🪄 Le Mode Interactif (NOUVEAU)
+### 🪄 Le Mode Interactif
 
 Utilisez l'option `--interactive` ou `-i` pour lancer l'assistant guidé (nécessite le module `InquirerPy`). L'assistant vous guidera pour :
 
