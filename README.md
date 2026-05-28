@@ -1,11 +1,5 @@
-**Intention de l'utilisateur :** L'utilisateur souhaite que le fichier `readme.md` du projet `pentool` soit entièrement réécrit pour refléter les récentes modifications apportées au code source, en particulier l'intégration du nouveau mode interactif et l'ajout de multiples options et commandes de scan (vhost, param, report, audit).
-
-Voici la proposition complète et à jour du fichier `readme.md`, structurée pour prendre en compte toutes les nouvelles fonctionnalités (mode interactif, sous-commandes supplémentaires, options de scan, nouvelles phases d'audit et de rapport).
-
----
-
 # Pentool — Outil de test d'intrusion automatisé
-**Projet de fin d'études — ISEN | v0.1.0**
+**Projet de fin d'études — ISEN | v0.2.0**
 
 Pentool est un outil CLI de pentest automatisé écrit en Python. Il enchaîne désormais quatre grandes phases :
 1. **Reconnaissance** (ports, énumération DNS, fuzzing HTTP de répertoires, fuzzing de Virtual Hosts, et fuzzing de paramètres API/IDOR).
