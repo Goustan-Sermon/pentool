@@ -69,8 +69,11 @@ class ServiceInfo:
     @property
     def fingerprint(self) -> str:
         """Retourne une chaîne lisible pour la recherche CVE."""
-        parts = [p for p in (self.product, self.version) if p]
-        return " ".join(parts) if parts else self.service
+        # On prend le produit s'il existe, sinon le nom du service
+        base_name = self.product if self.product else self.service
+        
+        parts = [p for p in (base_name, self.version) if p]
+        return " ".join(parts) if parts else "unknown"
 
     def to_dict(self) -> dict:
         return asdict(self)
