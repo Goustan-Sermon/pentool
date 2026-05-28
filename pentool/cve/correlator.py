@@ -122,6 +122,12 @@ class CVECorrelator:
 
     def _lookup_service(self, svc: ServiceInfo) -> list[CVEEntry]:
         """Cherche les CVE pour un ServiceInfo, avec cache."""
+        
+        # --- FILTRE STRICT : Pas de version, pas de CVE ---
+        if not svc.version:
+            return []
+        # --------------------------------------------------
+
         cache_key = CVECache.make_key(svc.fingerprint) if self._cache else None
 
         # 1. Cache hit ?
