@@ -291,7 +291,8 @@ class ReportGenerator:
             story += self._section_dns()
         if self._fuzz_data:
             story += self._section_fuzz()
-        if self._cve_data:
+        total_cves = sum(len(m.get("cves", [])) for m in self._cve_data)
+        if total_cves > 0:
             story += self._section_cve()
         if self._audit_data.get("misconfigs") or self._audit_data.get("fingerprints"):
             story += self._section_audit()
@@ -389,6 +390,20 @@ class ReportGenerator:
             for c in m.get("cves", [])
         ]
         max_score = max(all_scores) if all_scores else 0.0
+
+        # AJOUT : Mapping des sévérités textuelles vers un équivalent CVSS
+        sev_map = {"CRITICAL": 9.5, "HIGH": 7.5, "MEDIUM": 5.5, "LOW": 2.5, "INFO": 0.0}
+
+        # Prise en compte des découvertes Fuzzing (ex: .env exposé)
+        for r in self._fuzz_data.get("results", []):
+            sev = str(r.get("severity", "INFO")).upper()
+            max_score = max(max_score, sev_map.get(sev, 0.0))
+
+        # Prise en compte des découvertes d'Audit / Misconfigurations
+        for mc in self._audit_data.get("misconfigs", []):
+            for f in mc.get("findings", []):
+                sev = str(f.get("severity", "INFO")).upper()
+                max_score = max(max_score, sev_map.get(sev, 0.0))
 
         if max_score >= 9.0:
             risk_label, risk_col = "CRITIQUE", "#FF3B3B"
@@ -913,7 +928,8 @@ class ReportGenerator:
             sec += 1
         if self._fuzz_data:
             sec += 1
-        if self._cve_data:
+        total_cves = sum(len(m.get("cves", [])) for m in self._cve_data)
+        if total_cves > 0:
             sec += 1
 
         story.append(
@@ -1022,7 +1038,10 @@ class ReportGenerator:
             sec += 1
         if self._fuzz_data:
             sec += 1
-        if self._cve_data:
+        total_cves = sum(len(m.get("cves", [])) for m in self._cve_data)
+        if total_cves > 0:
+            sec += 1
+        if self._audit_data.get("misconfigs") or self._audit_data.get("fingerprints"):
             sec += 1
 
         story.append(Paragraph(f"{sec}. Recommandations", S["section_title"]))
